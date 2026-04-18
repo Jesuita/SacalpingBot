@@ -1,0 +1,37 @@
+.env
+__pycache__/
+*.pyc
+
+# Logs
+*.log
+bot_events.log
+trades.log
+intelligence_events.log
+optimizer_actions.log
+train_model.log
+_bot_crash.log
+
+# Runtime state (se regeneran solos)
+bot_state.json
+optimizer_state.json
+periodic_analysis.json
+rl_model.json
+
+# ML dataset y modelo (se regeneran con el bot)
+ml_dataset.csv
+ai_model.json
+
+# Base de datos SQLite
+*.db
+*.db-shm
+*.db-wal
+
+# Archivos temporales / debug
+*.tmp
+analyze_perf.py
+_analyze_trades.py
+_audit.py
+_check_state.py
+
+# Backups
+*.bak

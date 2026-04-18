@@ -1,0 +1,6 @@
+{
+  "enabled": true,
+  "threshold_pct": 0.15,
+  "action": "alert",
+  "refresh_seconds": 5
+}

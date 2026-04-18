@@ -1,0 +1,22 @@
+{
+  "name": "Scalping Bot Dashboard",
+  "short_name": "ScalpBot",
+  "description": "Bot de Scalping BTC/USDT - Dashboard en tiempo real",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#6366f1",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/static/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/static/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
