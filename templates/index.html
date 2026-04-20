@@ -98,6 +98,39 @@
       line-height: 1.4;
     }
 
+    /* Tooltips estilizados */
+    .tip {
+      position: relative;
+      cursor: help;
+      border-bottom: 1px dotted var(--text-dim);
+    }
+    .tip::after {
+      content: attr(data-tip);
+      position: absolute;
+      bottom: calc(100% + 8px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: #0f2a36;
+      color: #d1ecf1;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-size: 11px;
+      font-weight: 400;
+      line-height: 1.5;
+      white-space: normal;
+      width: max-content;
+      max-width: 300px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s;
+      z-index: 9999;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    }
+    .tip:hover::after {
+      opacity: 1;
+    }
+
     @media (max-width: 768px) {
       main {
         padding-left: 10px !important;
@@ -135,6 +168,14 @@
             🔍 Scanner
             <span id="scannerBadge" class="hidden absolute -top-1 -right-1 bg-rose-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">0</span>
           </button>
+          <!-- Toggle Spot/Futures -->
+          <div class="flex items-center gap-1 ml-2 bg-slate-800 border border-slate-700 rounded-lg px-2 py-0.5">
+            <span id="modeSpotLabel" class="text-[10px] font-bold text-emerald-400 cursor-pointer" onclick="setMarketMode('spot')">SPOT</span>
+            <button id="marketModeToggle" onclick="toggleMarketMode()" class="relative w-10 h-5 rounded-full transition-colors duration-200 bg-emerald-700" title="Cambiar entre modo Spot y Futuros. Spot: comisiones ~0.1%, sin apalancamiento. Futuros: comisiones ~0.04%, con apalancamiento configurable.">
+              <span id="marketModeKnob" class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform duration-200"></span>
+            </button>
+            <span id="modeFuturesLabel" class="text-[10px] font-bold text-slate-500 cursor-pointer" onclick="setMarketMode('futures')">FUTURES</span>
+          </div>
           <span id="uiStatus" class="text-xs text-amber-300"></span>
         </div>
       </div>
@@ -150,6 +191,69 @@
         <p id="healthDetail" class="text-xs text-slate-300 leading-relaxed"></p>
         <div id="healthMetrics" class="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]"></div>
       </div>
+
+      <!-- Panel Fees & Capital -->
+      <details id="feesPanel" class="rounded-2xl border border-slate-700 bg-slate-900/80 px-5 py-4 mt-3 group">
+        <summary class="flex items-center justify-between cursor-pointer select-none">
+          <div class="flex items-center gap-2">
+            <span class="text-xl">💰</span>
+            <span class="text-sm font-black text-slate-200 uppercase tracking-wider">Fees & Capital</span>
+            <span id="feesRuleStatus" class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-slate-700 text-slate-400">-</span>
+          </div>
+          <span class="text-xs text-slate-500 group-open:rotate-180 transition-transform">▼</span>
+        </summary>
+        <div class="mt-3 space-y-3">
+          <!-- Metricas principales -->
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+            <div class="bg-slate-800 rounded-xl p-3">
+              <p class="text-slate-400 text-xs">Fee por lado</p>
+              <p id="feePerSide" class="font-bold text-lg text-white">-</p>
+            </div>
+            <div class="bg-slate-800 rounded-xl p-3">
+              <p class="text-slate-400 text-xs">Fee round-trip</p>
+              <p id="feeRoundTrip" class="font-bold text-lg text-white">-</p>
+            </div>
+            <div class="bg-slate-800 rounded-xl p-3">
+              <p class="text-slate-400 text-xs">Take Profit actual</p>
+              <p id="feeTp" class="font-bold text-lg text-white">-</p>
+            </div>
+            <div class="bg-slate-800 rounded-xl p-3">
+              <p class="text-slate-400 text-xs">Fee consume del TP</p>
+              <p id="feeImpact" class="font-bold text-lg">-</p>
+            </div>
+          </div>
+          <!-- Estimaciones por trade -->
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+            <div class="bg-slate-800 rounded-xl p-3">
+              <p class="text-slate-400 text-xs">Capital operativo</p>
+              <p id="feeCapital" class="font-bold text-lg text-white">-</p>
+            </div>
+            <div class="bg-slate-800 rounded-xl p-3">
+              <p class="text-slate-400 text-xs">Monto por trade</p>
+              <p id="feeTradeSize" class="font-bold text-lg text-white">-</p>
+            </div>
+            <div class="bg-slate-800 rounded-xl p-3">
+              <p class="text-slate-400 text-xs">Ganancia neta/trade (win)</p>
+              <p id="feeNetProfit" class="font-bold text-lg">-</p>
+            </div>
+          </div>
+          <!-- Regla de oro -->
+          <div id="feeGoldenRule" class="rounded-xl p-3 border text-xs leading-relaxed">
+            <p class="font-bold mb-1">⚖️ Regla de oro</p>
+            <p id="feeGoldenText" class="text-slate-300">Cargando...</p>
+          </div>
+          <!-- Recomendacion -->
+          <div class="bg-slate-800/50 rounded-xl p-3 text-xs text-slate-400 leading-relaxed">
+            <p class="font-semibold text-slate-300 mb-1">📋 Referencia rapida</p>
+            <ul class="list-disc list-inside space-y-0.5">
+              <li>Spot Binance (0.1%/lado): capital minimo recomendado <b class="text-white">$1,000 - $3,000</b></li>
+              <li>Futuros Binance (0.02%/lado): capital minimo <b class="text-white">$300 - $500</b> con 3-5x</li>
+              <li>Spot con BNB discount (0.075%/lado): capital minimo <b class="text-white">$500 - $1,500</b></li>
+              <li>Si fees > 30% del TP → capital insuficiente o necesitas fees mas bajos</li>
+            </ul>
+          </div>
+        </div>
+      </details>
 
       <!-- Reporte de Analisis Periodico (cada 12h) -->
       <details id="analysisPanel" class="rounded-2xl border border-slate-700 bg-slate-900/80 px-5 py-4 mt-3 group">
@@ -215,6 +319,10 @@
         <label class="flex items-center gap-2 cursor-pointer">
           <input id="pnlShowMarkers" type="checkbox" checked class="accent-cyan-500" />
           <span>Eventos clave</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input id="pnlShowMilestones" type="checkbox" checked class="accent-purple-400" onchange="toggleMilestones()" />
+          <span>🔧 Correcciones</span>
         </label>
       </div>
       <canvas id="pnlTimelineChart" height="85"></canvas>
@@ -304,14 +412,14 @@
         </div>
       </div>
       <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm mb-4">
-        <div class="bg-slate-800 rounded-xl p-3"><p class="text-slate-400 text-xs">Trades ventana</p><p id="optTrades" class="font-bold text-lg">-</p></div>
-        <div class="bg-slate-800 rounded-xl p-3"><p class="text-slate-400 text-xs">Win rate</p><p id="optWinRate" class="font-bold text-lg">-</p></div>
-        <div class="bg-slate-800 rounded-xl p-3"><p class="text-slate-400 text-xs">Profit factor</p><p id="optPf" class="font-bold text-lg">-</p></div>
-        <div class="bg-slate-800 rounded-xl p-3"><p class="text-slate-400 text-xs">Expectancy</p><p id="optExpect" class="font-bold text-lg">-</p></div>
+        <div class="bg-slate-800 rounded-xl p-3"><p class="text-slate-400 text-xs tip" data-tip="Numero de trades en la ventana de analisis del optimizer. Se necesitan suficientes trades para que las metricas sean estadisticamente significativas.">Trades ventana</p><p id="optTrades" class="font-bold text-lg">-</p></div>
+        <div class="bg-slate-800 rounded-xl p-3"><p class="text-slate-400 text-xs tip" data-tip="Porcentaje de trades ganadores en la ventana. Win Rate alto no garantiza rentabilidad si las perdidas son grandes.">Win rate</p><p id="optWinRate" class="font-bold text-lg">-</p></div>
+        <div class="bg-slate-800 rounded-xl p-3"><p class="text-slate-400 text-xs tip" data-tip="Ratio ganancias/perdidas brutas. PF > 1.0 = ganador neto. El optimizer ajusta parametros para mejorar esta metrica.">Profit factor</p><p id="optPf" class="font-bold text-lg">-</p></div>
+        <div class="bg-slate-800 rounded-xl p-3"><p class="text-slate-400 text-xs tip" data-tip="Ganancia promedio esperada por trade. Expectancy positiva indica que la estrategia gana dinero en promedio.">Expectancy</p><p id="optExpect" class="font-bold text-lg">-</p></div>
       </div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
-        <label class="text-xs text-slate-300" title="Maximo de ventas permitidas en ventana de 60 minutos. Evita sobreoperar.">
-          Max trades por hora
+        <label class="text-xs text-slate-300">
+          <span class="tip" data-tip="Maximo de ventas permitidas en una ventana de 60 minutos. Evita que el bot sobreopere en condiciones de mercado erraticas.">Max trades por hora</span>
           <input id="cfgMaxTradesHour" type="number" min="1" max="300" step="1" value="40" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2" />
         </label>
         <div class="text-xs text-slate-300 bg-slate-800 border border-slate-700 rounded-lg p-3">
@@ -490,7 +598,7 @@
       <details class="group">
         <summary class="flex items-center justify-between cursor-pointer list-none">
           <div class="flex items-center gap-2">
-            <h2 class="text-sm uppercase tracking-wide text-emerald-300 font-black">🧠 Intelligence Engine</h2>
+            <h2 class="text-sm uppercase tracking-wide text-emerald-300 font-black">� Inteli Genie</h2>
             <span id="intelStatus" class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-slate-700 text-slate-400">OFF</span>
           </div>
           <div class="flex items-center gap-2">
@@ -818,7 +926,7 @@
       <!-- Gauge de riesgo -->
       <div class="mb-4">
         <div class="flex justify-between text-xs text-slate-400 mb-1">
-          <span>Exposicion al riesgo</span>
+          <span class="tip" data-tip="Indicador visual del nivel de riesgo de tu configuracion actual. Se calcula en base a exposicion, TP, trailing, confirmaciones y cooldown.">Exposicion al riesgo</span>
           <span id="riskGaugeLabel" class="font-bold">—</span>
         </div>
         <div class="w-full h-3 rounded-full bg-gradient-to-r from-emerald-500 via-amber-400 to-rose-600 relative">
@@ -828,35 +936,45 @@
       </div>
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mb-4">
         <div>
-          <div class="flex justify-between text-xs text-slate-300 mb-1"><span>Exposicion por trade</span><span id="slTradePctVal" class="font-mono text-cyan-400">—</span></div>
+          <div class="flex justify-between text-xs text-slate-300 mb-1"><span class="tip" data-tip="Porcentaje del balance asignado al par que se usa en cada operacion. 95% = casi todo. Mas alto = mayor ganancia/perdida por trade.">Exposicion por trade</span><span id="slTradePctVal" class="font-mono text-cyan-400">—</span></div>
           <input id="slTradePct" title="Porcentaje del balance usado por operacion. Mas alto = mas riesgo y mas impacto por trade." type="range" min="0.10" max="1.00" step="0.05" class="w-full accent-cyan-500" oninput="onSliderChange('trade_pct')" />
           <div class="flex justify-between text-xs text-slate-600 mt-0.5"><span>10%</span><span>100%</span></div>
         </div>
         <div>
-          <div class="flex justify-between text-xs text-slate-300 mb-1"><span>Take Profit objetivo</span><span id="slTakeProfitVal" class="font-mono text-cyan-400">—</span></div>
+          <div class="flex justify-between text-xs text-slate-300 mb-1"><span class="tip" data-tip="Ganancia objetivo por trade (%). Cuando el precio sube este porcentaje desde la entrada, se cierra la posicion. Valores bajos cierran rapido pero ganan poco; valores altos tardan mas pero capturan mas movimiento.">Take Profit objetivo</span><span id="slTakeProfitVal" class="font-mono text-cyan-400">—</span></div>
           <input id="slTakeProfit" title="Ganancia objetivo por trade. Si es muy baja puede cerrar rapido; si es alta puede tardar mas en ejecutarse." type="range" min="0.002" max="0.030" step="0.001" class="w-full accent-cyan-500" oninput="onSliderChange('take_profit_pct')" />
           <div class="flex justify-between text-xs text-slate-600 mt-0.5"><span>0.2%</span><span>3.0%</span></div>
         </div>
         <div>
-          <div class="flex justify-between text-xs text-slate-300 mb-1"><span>Trailing Stop</span><span id="slTrailingVal" class="font-mono text-cyan-400">—</span></div>
+          <div class="flex justify-between text-xs text-slate-300 mb-1"><span class="tip" data-tip="Stop dinamico que sigue al precio al alza. Cuando el precio baja este % desde su maximo, cierra la posicion. Mas pequeño = protege antes pero puede salir por ruido del mercado.">Trailing Stop</span><span id="slTrailingVal" class="font-mono text-cyan-400">—</span></div>
           <input id="slTrailing" title="Distancia del trailing stop. Mas bajo protege antes, pero puede sacar la posicion por ruido." type="range" min="0.001" max="0.020" step="0.001" class="w-full accent-cyan-500" oninput="onSliderChange('trailing_stop_pct')" />
           <div class="flex justify-between text-xs text-slate-600 mt-0.5"><span>0.1%</span><span>2.0%</span></div>
         </div>
         <div>
-          <div class="flex justify-between text-xs text-slate-300 mb-1"><span>Confirmaciones BUY</span><span id="slSignalConfVal" class="font-mono text-cyan-400">—</span></div>
+          <div class="flex justify-between text-xs text-slate-300 mb-1"><span class="tip" data-tip="Cantidad de velas consecutivas con senal BUY antes de ejecutar la compra. Mas confirmaciones = menos entradas falsas pero puede perder oportunidades rapidas.">Confirmaciones BUY</span><span id="slSignalConfVal" class="font-mono text-cyan-400">—</span></div>
           <input id="slSignalConf" title="Cantidad de confirmaciones consecutivas para validar una compra. Mas alto = menos entradas falsas." type="range" min="1" max="5" step="1" class="w-full accent-cyan-500" oninput="onSliderChange('signal_confirmations')" />
           <div class="flex justify-between text-xs text-slate-600 mt-0.5"><span>1</span><span>5</span></div>
         </div>
         <div>
-          <div class="flex justify-between text-xs text-slate-300 mb-1"><span>Cooldown entre trades (s)</span><span id="slCooldownVal" class="font-mono text-cyan-400">—</span></div>
+          <div class="flex justify-between text-xs text-slate-300 mb-1"><span class="tip" data-tip="Tiempo minimo de espera entre un cierre y la siguiente apertura. Evita reentrar inmediatamente en zonas de ruido o volatilidad extrema.">Cooldown entre trades (s)</span><span id="slCooldownVal" class="font-mono text-cyan-400">—</span></div>
           <input id="slCooldown" title="Tiempo minimo entre trades para evitar sobreoperar en zonas de ruido." type="range" min="0" max="60" step="1" class="w-full accent-cyan-500" oninput="onSliderChange('cooldown_seconds')" />
           <div class="flex justify-between text-xs text-slate-600 mt-0.5"><span>0s</span><span>60s</span></div>
         </div>
         <div>
-          <div class="flex justify-between text-xs text-slate-300 mb-1"><span>Max latencia API (ms)</span><span id="slMaxLatencyVal" class="font-mono text-cyan-400">—</span></div>
+          <div class="flex justify-between text-xs text-slate-300 mb-1"><span class="tip" data-tip="Latencia maxima permitida para respuestas de la API de Binance. Si se supera, el bot evita operar para no ejecutar con precios desactualizados.">Max latencia API (ms)</span><span id="slMaxLatencyVal" class="font-mono text-cyan-400">—</span></div>
           <input id="slMaxLatency" title="Latencia maxima de API permitida para operar. Si la latencia real supera este valor, el bot evita ejecutar." type="range" min="500" max="3000" step="100" class="w-full accent-cyan-500" oninput="onSliderChange('max_api_latency_ms')" />
           <div class="flex justify-between text-xs text-slate-600 mt-0.5"><span>500ms</span><span>3000ms</span></div>
         </div>
+      </div>
+      <!-- Slider: Max trades por dia -->
+      <div class="mb-4 bg-slate-800/40 border border-slate-700/50 rounded-xl p-4">
+        <div class="flex justify-between text-xs text-slate-300 mb-1">
+          <span class="tip" data-tip="Limite maximo de trades por dia por par. 0 = sin limite. Cada trade tiene un costo fijo en fees, por lo que mas trades no siempre es mejor. El valor recomendado se calcula segun tu TP y fees para maximizar eficiencia.">Max trades por dia</span>
+          <span id="slMaxTradesDayVal" class="font-mono text-cyan-400">Sin limite</span>
+        </div>
+        <input id="slMaxTradesDay" type="range" min="0" max="200" step="5" value="0" class="w-full accent-amber-500" oninput="onMaxTradesDayChange()" />
+        <div class="flex justify-between text-xs text-slate-600 mt-0.5"><span>Sin limite</span><span>200</span></div>
+        <div id="maxTradesDayReco" class="mt-2 text-[11px] text-slate-400 bg-slate-900/60 rounded-lg px-3 py-2"></div>
       </div>
       <!-- Parametros operativos (campos no cubiertos por sliders) -->
       <details class="group mb-4">
@@ -865,23 +983,23 @@
           Parametros operativos avanzados
         </summary>
         <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
-          <label class="text-xs text-slate-300" title="Modo candle: decide solo al cierre de vela. Modo tick: evalua con mayor frecuencia.">
-            Modo update
+          <label class="text-xs text-slate-300">
+            <span class="tip" data-tip="Modo candle: evalua solo al cierre de cada vela de 1 minuto (mas estable). Modo tick: consulta precios constantemente (mas rapido pero mas ruidoso).">Modo update</span>
             <select id="cfgUpdateMode" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2">
               <option value="candle">candle (1m)</option>
               <option value="tick">tick</option>
             </select>
           </label>
-          <label class="text-xs text-slate-300" title="Cada cuantos segundos consulta datos cuando el modo es tick.">
-            Poll segundos
+          <label class="text-xs text-slate-300">
+            <span class="tip" data-tip="Frecuencia de consulta de precios en modo tick. Mas bajo = mas actualizaciones pero mas carga en API.">Poll segundos</span>
             <input id="cfgPollSeconds" type="number" step="1" min="1" max="60" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2" />
           </label>
-          <label class="text-xs text-slate-300" title="Confirmaciones de senal SELL antes de cerrar por estrategia.">
-            Confirmaciones SELL
+          <label class="text-xs text-slate-300">
+            <span class="tip" data-tip="Cantidad de velas consecutivas con senal SELL antes de cerrar la posicion por estrategia. Mas alto = menos cierres prematuros.">Confirmaciones SELL</span>
             <input id="cfgSellSignalConf" type="number" step="1" min="1" max="5" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2" />
           </label>
-          <label class="text-xs text-slate-300" title="Tiempo minimo de permanencia en posicion antes de permitir cierre.">
-            Min hold (s)
+          <label class="text-xs text-slate-300">
+            <span class="tip" data-tip="Segundos minimos que se debe mantener una posicion antes de permitir su cierre por senal. Evita micro-trades que solo generan fees.">Min hold (s)</span>
             <input id="cfgMinHold" type="number" step="1" min="0" max="600" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2" />
           </label>
         </div>
@@ -910,14 +1028,14 @@
       </div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
         <div>
-          <label class="text-xs text-slate-300" title="Capital total disponible para operar. Se reparte entre los pares.">
-            Balance total (USDT)
+          <label class="text-xs text-slate-300">
+            <span class="tip" data-tip="Capital total en USDT que el bot tiene disponible para distribuir entre todos los pares activos.">Balance total (USDT)</span>
             <input id="walletBalance" type="number" step="1" min="1" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-lg font-bold text-emerald-400" />
           </label>
         </div>
         <div>
-          <label class="text-xs text-slate-300" title="Objetivo global de balance. Si la suma de todos los pares llega a este valor, el bot se detiene.">
-            Objetivo global (USDT)
+          <label class="text-xs text-slate-300">
+            <span class="tip" data-tip="Cuando el balance total alcanza este valor, el bot se detiene automaticamente. Define tu meta de ganancia.">Objetivo global (USDT)</span>
             <input id="walletTarget" type="number" step="1" min="1" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-lg font-bold text-amber-400" />
           </label>
         </div>
@@ -925,25 +1043,25 @@
       <!-- PnL Global -->
       <div id="walletPnlPanel" class="mb-4 grid grid-cols-2 sm:grid-cols-4 gap-2">
         <div class="bg-slate-800/80 rounded-xl p-2.5 text-center">
-          <p class="text-[10px] text-slate-500 uppercase tracking-wider">PnL Hoy</p>
+          <p class="text-[10px] text-slate-500 uppercase tracking-wider tip" data-tip="Ganancia o perdida neta de hoy (desde medianoche UTC). Incluye fees.">PnL Hoy</p>
           <p id="wpPnlToday" class="text-base font-black text-slate-400">-</p>
         </div>
         <div class="bg-slate-800/80 rounded-xl p-2.5 text-center">
-          <p class="text-[10px] text-slate-500 uppercase tracking-wider">PnL Acumulado</p>
+          <p class="text-[10px] text-slate-500 uppercase tracking-wider tip" data-tip="Ganancia o perdida total acumulada desde el inicio de la sesion de paper trading.">PnL Acumulado</p>
           <p id="wpPnlTotal" class="text-base font-black text-slate-400">-</p>
         </div>
         <div class="bg-slate-800/80 rounded-xl p-2.5 text-center">
-          <p class="text-[10px] text-slate-500 uppercase tracking-wider">Win Rate</p>
+          <p class="text-[10px] text-slate-500 uppercase tracking-wider tip" data-tip="Porcentaje de trades ganadores sobre el total. Un Win Rate > 50% con buena relacion riesgo/beneficio indica consistencia.">Win Rate</p>
           <p id="wpWinRate" class="text-base font-black text-slate-400">-</p>
         </div>
         <div class="bg-slate-800/80 rounded-xl p-2.5 text-center">
-          <p class="text-[10px] text-slate-500 uppercase tracking-wider">Profit Factor</p>
+          <p class="text-[10px] text-slate-500 uppercase tracking-wider tip" data-tip="Ratio entre ganancias brutas y perdidas brutas. PF > 1.0 = rentable. PF > 1.5 = bueno. PF < 1.0 = pierdes dinero.">Profit Factor</p>
           <p id="wpProfitFactor" class="text-base font-black text-slate-400">-</p>
         </div>
       </div>
       <div id="walletTradesPanel" class="mb-4 grid grid-cols-3 gap-2">
         <div class="bg-slate-800/80 rounded-xl p-2.5 text-center">
-          <p class="text-[10px] text-slate-500 uppercase tracking-wider">Trades Totales</p>
+          <p class="text-[10px] text-slate-500 uppercase tracking-wider tip" data-tip="Cantidad total de operaciones ejecutadas (compra+venta) en la sesion actual.">Trades Totales</p>
           <p id="wpTrades" class="text-base font-black text-slate-400">-</p>
         </div>
         <div class="bg-slate-800/80 rounded-xl p-2.5 text-center">
@@ -1023,7 +1141,7 @@
           <ul class="text-xs text-slate-400 space-y-1 mb-4 ml-4 list-disc">
             <li>Historial de trades (<code>trades.log</code>)</li>
             <li>Eventos del bot (<code>bot_events.log</code>)</li>
-            <li>Dataset de ML (<code>ml_dataset.csv</code>)</li>
+            <li>Dataset de ML (<code>ml_dataset.csv</code>) (opcional)</li>
             <li>Analisis periodicos (<code>periodic_analysis.json</code>)</li>
             <li>Modelo IA (<code>ai_model.json</code>)</li>
             <li>Logs del optimizer e inteligencia</li>
@@ -1031,6 +1149,13 @@
             <li>Configuracion (<code>runtime_config.json</code>) — vuelve a default</li>
             <li>Multi-source config y archivos temporales</li>
           </ul>
+          <label class="mb-4 flex items-start gap-2 text-xs text-slate-200 bg-slate-800/70 border border-slate-700 rounded-lg px-3 py-2">
+            <input id="resetKeepTrainingData" type="checkbox" class="mt-0.5 accent-emerald-500" />
+            <span>
+              Conservar datos de entrenamiento (<code>ml_dataset.csv</code>)
+              <span class="block text-slate-400">Si activas esta opcion, el reset borra logs/estado pero mantiene el dataset para seguir entrenando IA.</span>
+            </span>
+          </label>
           <p class="text-xs text-amber-400 font-bold mb-4">El bot se debe reiniciar despues del reset para que tome efecto.</p>
           <div class="flex gap-3 justify-end">
             <button onclick="document.getElementById('resetModal').classList.add('hidden')" class="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm font-bold">Cancelar</button>
@@ -1043,16 +1168,16 @@
     <section id="kpiSection" class="bg-slate-900 border border-slate-800 rounded-2xl p-4">
       <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div class="bg-slate-800/60 rounded-xl p-4">
-          <p class="text-[10px] uppercase tracking-wider text-slate-500">Precio actual</p>
+          <p class="text-[10px] uppercase tracking-wider text-slate-500 tip" data-tip="Ultimo precio de BTC/USDT obtenido de Binance en tiempo real.">Precio actual</p>
           <p id="price" class="text-3xl font-black mt-1">-</p>
         </div>
         <div class="bg-slate-800/60 rounded-xl p-4">
-          <p class="text-[10px] uppercase tracking-wider text-slate-500">Balance</p>
+          <p class="text-[10px] uppercase tracking-wider text-slate-500 tip" data-tip="Valor total del portafolio: USDT disponible + valor de BTC en posicion. Incluye ganancias y perdidas no realizadas.">Balance</p>
           <p id="balance" class="text-2xl font-bold mt-1">-</p>
           <p id="gain" class="text-xs mt-0.5">-</p>
         </div>
         <div class="bg-slate-800/60 rounded-xl p-4">
-          <p class="text-[10px] uppercase tracking-wider text-slate-500">Senal</p>
+          <p class="text-[10px] uppercase tracking-wider text-slate-500 tip" data-tip="Senal actual del motor de trading: BUY (comprar), SELL (vender) o HOLD (esperar). Se basa en cruces de EMA, RSI y MACD.">Senal</p>
           <div class="flex items-center gap-2 mt-1">
             <p id="signal" class="text-2xl font-black">HOLD</p>
             <span id="positionBadge" class="hidden text-[10px] px-2 py-0.5 rounded-full bg-emerald-600 text-white font-bold animate-pulse">ABIERTO</span>
@@ -1071,12 +1196,12 @@
     </section>
 
     <section class="bg-slate-900 border border-slate-800 rounded-2xl p-4">
-      <h2 class="text-sm uppercase tracking-wide text-slate-300 mb-3">Velas + EMA(9/21)</h2>
+      <h2 class="text-sm uppercase tracking-wide text-slate-300 mb-3"><span class="tip" data-tip="Grafico de velas japonesas con medias moviles exponenciales de 9 (rapida, cyan) y 21 (lenta, naranja) periodos. Cuando EMA9 cruza por encima de EMA21 = senal alcista.">Velas + EMA(9/21)</span></h2>
       <canvas id="priceChart" height="130"></canvas>
     </section>
 
     <section class="bg-slate-900 border border-slate-800 rounded-2xl p-4">
-      <h2 class="text-sm uppercase tracking-wide text-slate-300 mb-3">RSI</h2>
+      <h2 class="text-sm uppercase tracking-wide text-slate-300 mb-3"><span class="tip" data-tip="Relative Strength Index: mide la fuerza del movimiento de precio. RSI < 35 = sobreventa (posible rebote). RSI > 65 = sobrecompra (posible caida). Se usa para filtrar entradas y salidas.">RSI</span></h2>
       <canvas id="rsiChart" height="90"></canvas>
     </section>
 
@@ -1433,6 +1558,7 @@
     const pnlTimelineMetaEl = document.getElementById('pnlTimelineMeta');
     const pnlShowTradeLineEl = document.getElementById('pnlShowTradeLine');
     const pnlShowMarkersEl = document.getElementById('pnlShowMarkers');
+    const pnlShowMilestonesEl = document.getElementById('pnlShowMilestones');
     const soundToggleBtnEl = document.getElementById('soundToggleBtn');
     const riskBannerEl = document.getElementById('riskBanner');
     const humanPanelEl = document.getElementById('humanPanel');
@@ -1628,6 +1754,72 @@
     const slMaxLatencyValEl = document.getElementById('slMaxLatencyVal');
     const riskApplyBtnEl = document.getElementById('riskApplyBtn');
     const riskApplyStatusEl = document.getElementById('riskApplyStatus');
+
+    // --- Market Mode (Spot/Futures) ---
+    let currentMarketMode = 'spot';
+
+    function setMarketMode(mode) {
+      currentMarketMode = mode;
+      const toggle = document.getElementById('marketModeToggle');
+      const knob = document.getElementById('marketModeKnob');
+      const spotLabel = document.getElementById('modeSpotLabel');
+      const futuresLabel = document.getElementById('modeFuturesLabel');
+      if (mode === 'futures') {
+        toggle.classList.remove('bg-emerald-700');
+        toggle.classList.add('bg-amber-600');
+        knob.style.transform = 'translateX(20px)';
+        spotLabel.classList.remove('text-emerald-400');
+        spotLabel.classList.add('text-slate-500');
+        futuresLabel.classList.remove('text-slate-500');
+        futuresLabel.classList.add('text-amber-400');
+      } else {
+        toggle.classList.remove('bg-amber-600');
+        toggle.classList.add('bg-emerald-700');
+        knob.style.transform = 'translateX(0px)';
+        spotLabel.classList.remove('text-slate-500');
+        spotLabel.classList.add('text-emerald-400');
+        futuresLabel.classList.remove('text-amber-400');
+        futuresLabel.classList.add('text-slate-500');
+      }
+      cfgStatusEl.textContent = 'Sin guardar';
+    }
+
+    function toggleMarketMode() {
+      setMarketMode(currentMarketMode === 'spot' ? 'futures' : 'spot');
+    }
+
+    // --- Max Trades Per Day slider ---
+    const slMaxTradesDayEl = document.getElementById('slMaxTradesDay');
+    const slMaxTradesDayValEl = document.getElementById('slMaxTradesDayVal');
+    const maxTradesDayRecoEl = document.getElementById('maxTradesDayReco');
+
+    function updateMaxTradesDayLabel() {
+      const v = Number(slMaxTradesDayEl.value);
+      slMaxTradesDayValEl.textContent = v === 0 ? 'Sin limite' : v + ' trades';
+      // Calcular recomendado segun config
+      const tp = parseFloat(slTakeProfitEl.value) || 0.003;
+      const fee = currentMarketMode === 'futures' ? 0.0004 : 0.001;
+      const roundTripFee = fee * 2;
+      const netPerTrade = tp - roundTripFee;
+      let reco = '';
+      if (netPerTrade <= 0) {
+        reco = '⚠️ <b>Tu TP no cubre las fees.</b> Cada trade pierde dinero. Reduce la cantidad de trades o aumenta el TP.';
+      } else {
+        const idealMax = Math.round(24 * 60 / (tp * 10000));
+        reco = '💡 <b>Recomendado: ' + idealMax + '-' + (idealMax * 2) + ' trades/dia</b> con TP ' + (tp * 100).toFixed(2) + '% y fees ' + (roundTripFee * 100).toFixed(2) + '% (neto ' + (netPerTrade * 100).toFixed(2) + '% por trade). ';
+        if (v > 0 && v > idealMax * 3) {
+          reco += '<span class="text-amber-400">Tu limite actual es alto — mas trades = mas exposicion a fees.</span>';
+        } else if (v > 0 && v <= idealMax) {
+          reco += '<span class="text-emerald-400">Limite conservador — buena eficiencia de capital.</span>';
+        }
+      }
+      maxTradesDayRecoEl.innerHTML = reco;
+    }
+
+    function onMaxTradesDayChange() {
+      updateMaxTradesDayLabel();
+      cfgStatusEl.textContent = 'Sin guardar';
+    }
 
     function setupViewTabs() {
       const views = [
@@ -2253,6 +2445,17 @@
                 pointRadius: 4,
                 pointHoverRadius: 6,
                 showLine: false,
+              },
+              {
+                label: 'Correcciones bot',
+                data: [],
+                borderColor: '#c084fc',
+                backgroundColor: '#c084fc',
+                borderWidth: 0,
+                pointRadius: 6,
+                pointHoverRadius: 9,
+                pointStyle: 'rectRot',
+                showLine: false,
               }
             ]
           },
@@ -2269,6 +2472,11 @@
                     if (ctx.datasetIndex === 2) {
                       const reason = state.pnlTimelineReasons[ctx.dataIndex] || 'evento';
                       return `${dsLabel}: ${reason} | Acum $${formatNum(y)}`;
+                    }
+                    if (ctx.datasetIndex === 3) {
+                      const ms = (state.pnlMilestones || [])[ctx.dataIndex];
+                      if (ms) return `🔧 ${ms.label}: ${ms.detail}`;
+                      return `${dsLabel}: corrección`;
                     }
                     return `${dsLabel}: $${formatNum(y)}`;
                   }
@@ -2297,9 +2505,14 @@
         const params = new URLSearchParams();
         if (!globalMode && state.activeSymbol) params.set('symbol', state.activeSymbol);
         params.set('limit_rows', globalMode ? '50000' : '2000');
-        const resp = await fetch(`/trades-insights?${params.toString()}`);
+        const [resp, optResp] = await Promise.all([
+          fetch(`/trades-insights?${params.toString()}`),
+          fetch('/optimizer-events'),
+        ]);
         const data = await resp.json();
+        const optData = await optResp.json();
         const rows = (data && data.rows) ? data.rows : [];
+        const optEvents = (optData && optData.events) ? optData.events : [];
 
         const sells = rows
           .filter((r) => String(r.type || '').toUpperCase() === 'SELL')
@@ -2359,6 +2572,54 @@
         state.pnlTimelineChart.data.datasets[2].data = markerSeries;
         state.pnlTimelineChart.data.datasets[2].pointBackgroundColor = markerColors;
         state.pnlTimelineReasons = markerReasons;
+
+        // ── Milestones de correcciones del optimizer ──
+        const milestoneSeries = new Array(labels.length).fill(null);
+        const milestoneColors = new Array(labels.length).fill('#c084fc');
+        const milestonesMeta = [];
+        if (optEvents.length && sells.length) {
+          optEvents.forEach((ev) => {
+            const evDt = new Date(ev.time.replace(' ', 'T'));
+            if (isNaN(evDt.getTime())) return;
+            // Find nearest sell index (closest timestamp after the event)
+            let bestIdx = -1;
+            let bestDiff = Infinity;
+            sells.forEach((s, i) => {
+              const diff = s.dt - evDt;
+              if (diff >= 0 && diff < bestDiff) { bestDiff = diff; bestIdx = i; }
+            });
+            // If no sell after, use the last one
+            if (bestIdx === -1) {
+              let minAbsDiff = Infinity;
+              sells.forEach((s, i) => {
+                const d = Math.abs(s.dt - evDt);
+                if (d < minAbsDiff) { minAbsDiff = d; bestIdx = i; }
+              });
+            }
+            if (bestIdx >= 0 && milestoneSeries[bestIdx] === null) {
+              milestoneSeries[bestIdx] = series[bestIdx];
+              milestoneColors[bestIdx] = ev.color || '#c084fc';
+              milestonesMeta.push({ idx: bestIdx, label: ev.label || ev.type, detail: ev.detail || '', color: ev.color || '#c084fc' });
+            }
+          });
+        }
+        // Compact: only non-null entries for dataset 3
+        const msData = [];
+        const msColors = [];
+        const msMeta = [];
+        const msLabelsIdx = [];
+        milestoneSeries.forEach((v, i) => {
+          if (v !== null) {
+            msData.push({ x: labels[i], y: v });
+            msColors.push(milestoneColors[i]);
+            const m = milestonesMeta.find((mm) => mm.idx === i);
+            msMeta.push(m || { label: '?', detail: '' });
+          }
+        });
+        // Use sparse array matching labels length for proper alignment
+        state.pnlTimelineChart.data.datasets[3].data = milestoneSeries;
+        state.pnlTimelineChart.data.datasets[3].pointBackgroundColor = milestoneColors;
+        state.pnlMilestones = milestonesMeta;
 
         state.pnlTimelineChart.data.datasets[0].hidden = !pnlShowTradeLineEl.checked;
         state.pnlTimelineChart.data.datasets[2].hidden = !pnlShowMarkersEl.checked;
@@ -3025,14 +3286,22 @@
     };
 
     window.confirmPaperReset = function() {
+      const keepEl = document.getElementById('resetKeepTrainingData');
+      if (keepEl) keepEl.checked = true;
       document.getElementById('resetModal').classList.remove('hidden');
     };
 
     window.executePaperReset = async function() {
       const btn = document.getElementById('resetConfirmBtn');
+      const keepEl = document.getElementById('resetKeepTrainingData');
+      const preserveTrainingData = !!(keepEl && keepEl.checked);
       if (btn) { btn.disabled = true; btn.textContent = 'Borrando...'; }
       try {
-        const resp = await fetch('/paper-reset', { method: 'POST' });
+        const resp = await fetch('/paper-reset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ preserve_training_data: preserveTrainingData }),
+        });
         const data = await resp.json();
         document.getElementById('resetModal').classList.add('hidden');
         if (data.status === 'ok') {
@@ -3053,6 +3322,61 @@
         if (btn) { btn.disabled = false; btn.textContent = 'Si, borrar todo'; }
       }
     };
+
+    function updateFeesPanel(cfg) {
+      const feePct = Number(cfg.fee_pct || 0.001);
+      const tp = Number(cfg.take_profit_pct || 0.003);
+      const tradePct = Number(cfg.trade_pct || 0.80);
+      const balance = Number(cfg.wallet_balance || 100);
+      const roundTrip = feePct * 2;
+      const impactPct = tp > 0 ? (roundTrip / tp) * 100 : 0;
+      const tradeSize = balance * tradePct;
+      const grossProfit = tradeSize * tp;
+      const feeCost = tradeSize * roundTrip;
+      const netProfit = grossProfit - feeCost;
+
+      document.getElementById('feePerSide').textContent = (feePct * 100).toFixed(3) + '%';
+      document.getElementById('feeRoundTrip').textContent = (roundTrip * 100).toFixed(3) + '%';
+      document.getElementById('feeTp').textContent = (tp * 100).toFixed(2) + '%';
+
+      const impactEl = document.getElementById('feeImpact');
+      impactEl.textContent = impactPct.toFixed(1) + '%';
+      impactEl.className = 'font-bold text-lg ' + (impactPct > 50 ? 'text-red-400' : impactPct > 30 ? 'text-yellow-400' : 'text-green-400');
+
+      document.getElementById('feeCapital').textContent = '$' + balance.toFixed(0);
+      document.getElementById('feeTradeSize').textContent = '$' + tradeSize.toFixed(2);
+
+      const netEl = document.getElementById('feeNetProfit');
+      netEl.textContent = '$' + netProfit.toFixed(2);
+      netEl.className = 'font-bold text-lg ' + (netProfit > 0 ? 'text-green-400' : 'text-red-400');
+
+      // Status badge
+      const badge = document.getElementById('feesRuleStatus');
+      if (impactPct > 50) {
+        badge.textContent = '⚠️ Critico';
+        badge.className = 'text-[10px] px-2 py-0.5 rounded-full font-bold bg-red-900/50 text-red-400';
+      } else if (impactPct > 30) {
+        badge.textContent = '⚡ Ajustado';
+        badge.className = 'text-[10px] px-2 py-0.5 rounded-full font-bold bg-yellow-900/50 text-yellow-400';
+      } else {
+        badge.textContent = '✅ Saludable';
+        badge.className = 'text-[10px] px-2 py-0.5 rounded-full font-bold bg-green-900/50 text-green-400';
+      }
+
+      // Golden rule text
+      const ruleEl = document.getElementById('feeGoldenText');
+      const ruleBox = document.getElementById('feeGoldenRule');
+      if (impactPct > 50) {
+        ruleEl.innerHTML = `<span class="text-red-400 font-bold">Los fees consumen ${impactPct.toFixed(0)}% de cada trade ganador.</span> Con TP ${(tp*100).toFixed(2)}% y fee round-trip ${(roundTrip*100).toFixed(2)}%, cada win de <b>$${grossProfit.toFixed(2)}</b> bruto queda en <b>$${netProfit.toFixed(2)}</b> neto. Necesitas mas capital, reducir fees (futuros/BNB), o subir el TP.`;
+        ruleBox.className = 'rounded-xl p-3 border border-red-800 bg-red-950/30 text-xs leading-relaxed';
+      } else if (impactPct > 30) {
+        ruleEl.innerHTML = `<span class="text-yellow-400 font-bold">Los fees consumen ${impactPct.toFixed(0)}% de cada trade ganador.</span> Cada win bruto de <b>$${grossProfit.toFixed(2)}</b> ➜ neto <b>$${netProfit.toFixed(2)}</b>. Funcional pero ajustado — considera reducir fees o aumentar capital.`;
+        ruleBox.className = 'rounded-xl p-3 border border-yellow-800 bg-yellow-950/30 text-xs leading-relaxed';
+      } else {
+        ruleEl.innerHTML = `<span class="text-green-400 font-bold">Fees saludables (${impactPct.toFixed(0)}% del TP).</span> Cada win bruto de <b>$${grossProfit.toFixed(2)}</b> ➜ neto <b>$${netProfit.toFixed(2)}</b>. Relacion fees/ganancia en rango optimo.`;
+        ruleBox.className = 'rounded-xl p-3 border border-green-800 bg-green-950/30 text-xs leading-relaxed';
+      }
+    }
 
     function applyConfigToInputs(cfg) {
       cfgSymbolsEl.value = Array.isArray(cfg && cfg.symbols) ? cfg.symbols.join(',') : 'BTCUSDT,ETHUSDT';
@@ -3092,6 +3416,14 @@
       renderWalletPairRows(cfg);
       syncSlidersFromInputs();
       startOptimizerAutoScheduler();
+      updateFeesPanel(cfg);
+      // Market mode
+      const mm = (cfg && cfg.market_mode) ? cfg.market_mode : 'spot';
+      setMarketMode(mm);
+      // Max trades per day slider
+      const mtpd = Number((cfg && cfg.max_trades_per_day != null) ? cfg.max_trades_per_day : 0);
+      slMaxTradesDayEl.value = mtpd;
+      updateMaxTradesDayLabel();
     }
 
     async function loadConfig() {
@@ -3152,6 +3484,8 @@
         ai_low_trade_pct_mult: Number(cfgAiLowTradeMultEl.value),
         ai_high_tp_mult: Number(cfgAiHighTpMultEl.value),
         ai_low_tp_mult: Number(cfgAiLowTpMultEl.value),
+        market_mode: currentMarketMode,
+        max_trades_per_day: Number(slMaxTradesDayEl.value),
       };
       // Include wallet pair allocations/targets
       // Si el smart optimizer esta activo, preservar allocations/targets del servidor
@@ -3340,6 +3674,7 @@
     function onSliderChange(key) {
       updateSliderLabels();
       updateRiskGauge();
+      updateMaxTradesDayLabel();
       // mirror to numeric inputs immediately
       if (key === 'trade_pct') cfgTradePctEl.value = parseFloat(slTradePctEl.value).toFixed(2);
       if (key === 'take_profit_pct') cfgTakeProfitEl.value = parseFloat(slTakeProfitEl.value).toFixed(4);
@@ -4534,6 +4869,11 @@
       state.pnlTimelineChart.data.datasets[2].hidden = !pnlShowMarkersEl.checked;
       state.pnlTimelineChart.update();
     });
+    function toggleMilestones() {
+      if (!state.pnlTimelineChart || !state.pnlTimelineChart.data.datasets[3]) return;
+      state.pnlTimelineChart.data.datasets[3].hidden = !pnlShowMilestonesEl.checked;
+      state.pnlTimelineChart.update();
+    }
     riskApplyBtnEl.addEventListener('click', async () => {
       riskApplyStatusEl.textContent = 'Guardando...';
       await saveConfig();
@@ -4751,9 +5091,9 @@
             const emoji = s.category_emoji || (isAdd ? '' : '');
             let actionBtn = '';
             if (isAdd) {
-              actionBtn = '<button onclick="addPairFromScanner(\\\'' + s.symbol + '\\\')" class="px-2 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600 text-[10px] font-bold text-white">+ Agregar</button>';
+              actionBtn = '<button onclick="addPairFromScanner(\'' + s.symbol + '\')" class="px-2 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600 text-[10px] font-bold text-white">+ Agregar</button>';
             } else {
-              actionBtn = '<button onclick="removePairFromScanner(\\\'' + s.symbol + '\\\')" class="px-2 py-0.5 rounded bg-rose-800 hover:bg-rose-700 text-[10px] font-bold text-white">Quitar</button>';
+              actionBtn = '<button onclick="removePairFromScanner(\'' + s.symbol + '\')" class="px-2 py-0.5 rounded bg-rose-800 hover:bg-rose-700 text-[10px] font-bold text-white">Quitar</button>';
             }
             let extra = '';
             if (isAdd) {
@@ -4817,12 +5157,94 @@
       }
     }
     async function forceScan() {
-      document.getElementById('scannerStatus').textContent = 'Escaneando...';
+      const statusEl = document.getElementById('scannerStatus');
+      const sugEl = document.getElementById('scannerSuggestions');
+      const badge = document.getElementById('scannerBadge');
+      // Limpiar resultados anteriores
+      sugEl.innerHTML = '';
+      badge.classList.add('hidden');
+      badge.textContent = '0';
+      statusEl.textContent = 'Escaneando... 0%';
+      let sugCount = 0;
+
       try {
-        await fetch('/scanner/force-scan', { method: 'POST' });
+        const resp = await fetch('/scanner/stream-scan');
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            let evt;
+            try { evt = JSON.parse(line.slice(6)); } catch { continue; }
+
+            if (evt.event === 'scan_start') {
+              statusEl.textContent = `Escaneando 0/${evt.total_pairs} pares...`;
+            } else if (evt.event === 'pair_done' || evt.event === 'pair_skip') {
+              const pct = Math.round((evt.progress / evt.total) * 100);
+              statusEl.textContent = `Escaneando ${evt.progress}/${evt.total} pares... ${pct}%`;
+            } else if (evt.event === 'suggestion') {
+              const pct = evt.total ? Math.round((evt.progress / evt.total) * 100) : '';
+              if (evt.total) statusEl.textContent = `Escaneando ${evt.progress}/${evt.total}... ${pct}% — encontrado ${evt.data.symbol}`;
+              sugCount++;
+              badge.textContent = sugCount;
+              badge.classList.remove('hidden');
+              // Renderizar sugerencia incremental
+              const s = evt.data;
+              const isAdd = s.type === 'add_pair';
+              const cat = _catStyle(s.category || (isAdd ? 'watch' : 'underperformer'));
+              const emoji = s.category_emoji || '';
+              let actionBtn = '';
+              if (isAdd) {
+                actionBtn = '<button onclick="addPairFromScanner(\'' + s.symbol + '\')" class="px-2 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600 text-[10px] font-bold text-white">+ Agregar</button>';
+              } else {
+                actionBtn = '<button onclick="removePairFromScanner(\'' + s.symbol + '\')" class="px-2 py-0.5 rounded bg-rose-800 hover:bg-rose-700 text-[10px] font-bold text-white">Quitar</button>';
+              }
+              let extra = '';
+              if (isAdd) {
+                const regime = s.regime ? ' | ' + s.regime : '';
+                extra = '<div class="text-[11px] text-slate-400 mt-1">' +
+                  '<span class="text-purple-300">Scalp:' + (s.scalping_score||0) + '</span> ' +
+                  '<span class="text-cyan-300">Oport:' + (s.opportunity_score||0) + '</span> ' +
+                  '| RSI:' + (s.rsi||'-') + ' | ATR:' + (s.atr_pct||0) + '% | $' + (s.volume_usdt_m||0) + 'M' + regime + '</div>';
+              } else {
+                const urg = s.urgency || '';
+                const urgColor = urg === 'alta' ? 'text-rose-400' : urg === 'media' ? 'text-amber-400' : 'text-slate-400';
+                extra = '<div class="text-[11px] text-slate-400 mt-1">PnL: $' + (s.pnl||0).toFixed(2) + ' | Trades: ' + (s.trades||0) + ' | WR: ' + (s.win_rate||0).toFixed(1) + '% | PF: ' + (s.profit_factor||0).toFixed(2) + '</div>' +
+                  (s.recommendation ? '<div class="text-[10px] font-bold ' + urgColor + ' mt-0.5">' + s.recommendation + '</div>' : '');
+              }
+              const card = '<div class="border rounded-lg p-2 ' + cat.border + ' ' + cat.bg + ' animate-pulse-once">' +
+                '<div class="flex items-center justify-between">' +
+                '<div class="flex items-center gap-1.5">' +
+                '<span class="text-xs font-bold text-white">' + emoji + ' ' + s.symbol + '</span>' +
+                '<span class="text-[9px] px-1.5 py-0.5 rounded font-bold ' + cat.badge + '">' + cat.label + '</span>' +
+                (isAdd ? '<span class="text-[10px] font-bold text-purple-300">' + (s.combined_score||0) + '</span>' : '') +
+                '</div>' +
+                actionBtn +
+                '</div>' +
+                '<p class="text-xs text-slate-300 mt-1">' + (s.reason || '') + '</p>' +
+                extra +
+                '<div class="text-[10px] text-slate-500 mt-1">' + (s.time || '') + '</div>' +
+                '</div>';
+              sugEl.insertAdjacentHTML('beforeend', card);
+            } else if (evt.event === 'scan_complete') {
+              statusEl.textContent = `Scan completo: ${evt.scanned_pairs} pares analizados, ${evt.suggestions_count} sugerencias`;
+            } else if (evt.event === 'error') {
+              statusEl.textContent = 'Error: ' + evt.message;
+            }
+          }
+        }
+        // Cargar estado completo (para la tabla de todos los pares)
         await loadScannerState();
       } catch (e) {
-        document.getElementById('scannerStatus').textContent = 'Error al escanear';
+        statusEl.textContent = 'Error al escanear';
       }
     }
 

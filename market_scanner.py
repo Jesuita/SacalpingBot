@@ -57,6 +57,63 @@ _scanner_state: Dict[str, Any] = {
 
 _alerts: deque = deque(maxlen=100)
 _score_history: Dict[str, List[Dict[str, Any]]] = {}
+_notified_opportunities: Dict[str, float] = {}  # symbol -> timestamp de ultima notificacion
+_NOTIFY_COOLDOWN_SECONDS = 1800  # 30 min cooldown por par notificado
+
+
+def _notify_scanner_opportunities(suggestions: List[Dict], underperformers: List[Dict], market_overview: Dict):
+    """Envia notificaciones Telegram para oportunidades hot/steady y underperformers."""
+    try:
+        import telegram_notifier
+    except ImportError:
+        return
+
+    now = time.time()
+    hot_suggestions = [s for s in suggestions if s.get("category") in ("hot", "steady") and s.get("type") == "add_pair"]
+    urgent_underperformers = [u for u in underperformers if u.get("urgency") == "alta"]
+
+    # Filtrar ya notificados recientemente
+    new_hot = []
+    for s in hot_suggestions:
+        sym = s["symbol"]
+        last_notified = _notified_opportunities.get(sym, 0)
+        if now - last_notified > _NOTIFY_COOLDOWN_SECONDS:
+            new_hot.append(s)
+            _notified_opportunities[sym] = now
+
+    if not new_hot and not urgent_underperformers:
+        return
+
+    # Construir mensaje
+    lines = ["🔍 <b>Scanner — Oportunidades detectadas</b>"]
+    sentiment = market_overview.get("sentiment", "?")
+    conditions = market_overview.get("scalping_conditions", "?")
+    lines.append(f"📊 Mercado: {sentiment} | Scalping: {conditions}")
+    lines.append("")
+
+    if new_hot:
+        for s in new_hot[:5]:
+            emoji = s.get("category_emoji", "🔥")
+            cat = s.get("category", "?").upper()
+            score = s.get("combined_score", 0)
+            rsi = s.get("rsi", 0)
+            regime = s.get("regime", "?")
+            price = s.get("price", 0)
+            lines.append(f"{emoji} <b>{s['symbol']}</b> [{cat}] Score: {score:.0f}")
+            lines.append(f"   💰 ${price:,.2f} | RSI: {rsi:.0f} | {regime}")
+            reason = s.get("reason", "")
+            if reason:
+                lines.append(f"   📝 {reason[:80]}")
+            lines.append("")
+
+    if urgent_underperformers:
+        lines.append("⚠️ <b>Pares con bajo rendimiento:</b>")
+        for u in urgent_underperformers[:3]:
+            lines.append(f"   ❌ {u['symbol']}: PnL ${u.get('pnl', 0):.2f} | WR {u.get('win_rate', 0):.0f}% | {u.get('recommendation', '')}")
+        lines.append("")
+
+    msg = "\n".join(lines)
+    telegram_notifier.send_message(msg, msg_type="scanner_opportunity")
 
 
 # ─────────────────────────────────────────────
@@ -495,6 +552,139 @@ def _compute_market_overview(pair_analyses):
 #  SCAN PRINCIPAL
 # ─────────────────────────────────────────────
 
+
+def run_scan_streaming():
+    """Generador que yield eventos JSON conforme analiza cada par. Para SSE."""
+    import json as _json
+
+    active_pairs = _get_active_pairs()
+    performance = _analyze_performance_from_log()
+    underperformers = _analyze_underperformers(performance, active_pairs)
+
+    top_pairs = _get_top_usdt_pairs()
+    if not top_pairs:
+        yield _json.dumps({"event": "error", "message": "No se pudieron obtener pares"})
+        return
+
+    yield _json.dumps({"event": "scan_start", "total_pairs": len(top_pairs)})
+
+    pair_analyses = {}
+    suggestions = []
+
+    for idx, info in enumerate(top_pairs):
+        symbol = info["symbol"]
+        candles = _get_klines(symbol)
+        if len(candles) < 40:
+            yield _json.dumps({"event": "pair_skip", "symbol": symbol, "progress": idx + 1, "total": len(top_pairs)})
+            continue
+
+        closes = [c["close"] for c in candles]
+        highs = [c["high"] for c in candles]
+        lows = [c["low"] for c in candles]
+        volumes = [c["volume"] for c in candles]
+        price = closes[-1]
+
+        rsi_val = _rsi(closes)
+        ema9 = _ema(closes, 9)
+        ema21 = _ema(closes, 21)
+        ema_diff_pct = (ema9[-1] - ema21[-1]) / max(price, 1e-9) * 100 if ema9 and ema21 else 0
+        macd_line, signal_line, macd_hist = _macd(closes)
+        bb = _bollinger(closes)
+        atr_val = _atr(highs, lows, closes)
+        atr_pct = atr_val / max(price, 1e-9) * 100
+        vol_prof = _volume_profile(volumes)
+        regime = _detect_regime(closes, ema9, ema21, bb)
+        volume_usdt_m = info["volume_usdt"] / 1_000_000
+
+        scalping_score = _score_scalping_fitness(atr_pct, volume_usdt_m, vol_prof["consistency"], bb["width_pct"], regime, rsi_val)
+        opportunity_score = _score_opportunity(rsi_val, macd_hist, ema_diff_pct, bb["position"], info["change_pct"], vol_prof["trend"])
+        classification = _classify_opportunity(scalping_score, opportunity_score, regime)
+
+        analysis = {
+            "scalping_score": round(scalping_score, 1),
+            "opportunity_score": round(opportunity_score, 1),
+            "combined_score": classification["combined_score"],
+            "category": classification["category"],
+            "category_label": classification["label"],
+            "category_emoji": classification["emoji"],
+            "rsi": round(rsi_val, 1),
+            "atr_pct": round(atr_pct, 3),
+            "regime": regime,
+            "volume_usdt_m": round(volume_usdt_m, 1),
+            "change_pct": round(info["change_pct"] * 100, 2),
+            "price": price,
+            "is_active": symbol in active_pairs,
+        }
+        pair_analyses[symbol] = analysis
+
+        # Si es sugerencia interesante, emitirla inmediatamente
+        if classification["category"] in ("hot", "steady") and symbol not in active_pairs:
+            reasons = []
+            if rsi_val < 35: reasons.append(f"RSI en sobreventa ({rsi_val:.0f})")
+            if macd_hist > 0: reasons.append("MACD positivo con impulso")
+            if ema_diff_pct > 0.1: reasons.append("Tendencia alcista activa")
+            if bb["position"] < 0.3: reasons.append("Precio cerca de banda inferior")
+            if volume_usdt_m > 200: reasons.append(f"Alta liquidez (${volume_usdt_m:.0f}M)")
+            if vol_prof["trend"] > 1.3: reasons.append(f"Volumen creciendo ({vol_prof['trend']:.1f}x)")
+            if regime == "ranging": reasons.append("Mercado lateral ideal para scalping")
+            if atr_pct > 0.25: reasons.append(f"Rango ATR aprovechable ({atr_pct:.2f}%)")
+
+            sug = {
+                "type": "add_pair", "symbol": symbol,
+                "category": classification["category"],
+                "category_emoji": classification["emoji"],
+                "category_label": classification["label"],
+                "combined_score": classification["combined_score"],
+                "scalping_score": round(scalping_score, 1),
+                "opportunity_score": round(opportunity_score, 1),
+                "reason": ". ".join(reasons) if reasons else classification["description"],
+                "price": price, "rsi": round(rsi_val, 1), "regime": regime,
+                "volume_usdt_m": round(volume_usdt_m, 1), "atr_pct": round(atr_pct, 3),
+                "time": time.strftime("%H:%M:%S"),
+            }
+            suggestions.append(sug)
+            yield _json.dumps({"event": "suggestion", "data": sug, "progress": idx + 1, "total": len(top_pairs)})
+        else:
+            yield _json.dumps({"event": "pair_done", "symbol": symbol, "category": classification["category"], "combined_score": classification["combined_score"], "progress": idx + 1, "total": len(top_pairs)})
+
+        time.sleep(0.12)
+
+    # Underperformers al final
+    for up in underperformers:
+        sug = {
+            "type": "review_pair", "symbol": up["symbol"],
+            "category": "underperformer", "category_emoji": "\u26a0\ufe0f",
+            "category_label": "Bajo rendimiento", "combined_score": 0,
+            "reason": " | ".join(up["issues"]),
+            "recommendation": up["recommendation"], "urgency": up["urgency"],
+            "pnl": up["pnl"], "trades": up["trades"],
+            "win_rate": up["win_rate"], "profit_factor": up["profit_factor"],
+            "time": time.strftime("%H:%M:%S"),
+        }
+        suggestions.append(sug)
+        yield _json.dumps({"event": "suggestion", "data": sug})
+
+    # Guardar estado final
+    market_overview = _compute_market_overview(pair_analyses)
+    type_order = {"hot": 0, "steady": 1, "risky": 2, "watch": 3, "underperformer": 4}
+    suggestions.sort(key=lambda x: (type_order.get(x.get("category", ""), 5), -x.get("combined_score", 0)))
+    add_sug = [s for s in suggestions if s["type"] == "add_pair"][:8]
+    rev_sug = [s for s in suggestions if s["type"] == "review_pair"]
+    suggestions = add_sug + rev_sug
+
+    result = {
+        "last_scan": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "scanned_pairs": len(pair_analyses),
+        "suggestions": suggestions, "pair_scores": pair_analyses,
+        "underperformers": underperformers, "market_overview": market_overview,
+        "active_pairs": active_pairs, "error": None, "running": False,
+    }
+    with _scanner_lock:
+        _scanner_state.update(result)
+
+    yield _json.dumps({"event": "scan_complete", "scanned_pairs": len(pair_analyses), "suggestions_count": len(suggestions)})
+
+
 def run_scan() -> Dict[str, Any]:
     active_pairs = _get_active_pairs()
     performance = _analyze_performance_from_log()
@@ -629,6 +819,9 @@ def run_scan() -> Dict[str, Any]:
             "time": s["time"], "type": s["type"], "symbol": s["symbol"],
             "category": s.get("category", ""), "message": s.get("reason", ""),
         })
+
+    # Notificar oportunidades hot/steady por Telegram
+    _notify_scanner_opportunities(suggestions, underperformers, market_overview)
 
     return {
         "last_scan": time.strftime("%Y-%m-%dT%H:%M:%S"),

@@ -7,7 +7,7 @@ import time
 from typing import Any, Dict
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 import requests
 import uvicorn
 
@@ -974,6 +974,76 @@ def get_trades_insights(
   return JSONResponse(build_trades_insights(filtered, limit_rows=limit_rows))
 
 
+@app.get("/optimizer-events")
+def get_optimizer_events():
+    """Retorna eventos significativos del optimizer para mostrar como hitos en el timeline."""
+    log_file = "optimizer_actions.log"
+    if not os.path.exists(log_file):
+        return JSONResponse({"events": []})
+    events = []
+    skip_types = {"skip_no_new_trades", "skip_no_trades", "no_changes", "config_saved"}
+    try:
+        with open(log_file, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                etype = obj.get("type", "")
+                if etype in skip_types:
+                    continue
+                ev = {"time": obj.get("time", ""), "type": etype}
+                if etype == "remove_pair":
+                    ev["label"] = f"Removido {obj.get('symbol', '?')}"
+                    ev["detail"] = "; ".join(obj.get("reasons", []))
+                    ev["color"] = "#ef4444"
+                elif etype == "adjust_param":
+                    param = obj.get("param", "?")
+                    old_v = obj.get("old_value", 0)
+                    new_v = obj.get("new_value", 0)
+                    pname = param.replace("_pct", "").replace("_", " ").upper()
+                    direction = "▲" if new_v > old_v else "▼"
+                    ev["label"] = f"{pname} {direction} {round(new_v * 100, 2)}%"
+                    ev["detail"] = obj.get("reason", "")
+                    ev["color"] = "#f59e0b"
+                elif etype == "adjust_trailing":
+                    ev["label"] = f"Trailing → {round(obj.get('new_value', 0) * 100, 2)}%"
+                    ev["detail"] = obj.get("reason", "")
+                    ev["color"] = "#f59e0b"
+                elif etype == "adjust_exit_aggressiveness":
+                    ev["label"] = f"Exit aggr: conf={obj.get('new_sell_conf', '?')} hold={obj.get('new_min_hold', '?')}s"
+                    ev["detail"] = obj.get("reason", "")
+                    ev["color"] = "#a78bfa"
+                elif etype == "auto_retrain":
+                    acc = obj.get("accuracy", 0)
+                    ev["label"] = f"AI retrain (acc={round(acc * 100, 1)}%)"
+                    ev["detail"] = f"samples={obj.get('samples', 0)}, f1={round(obj.get('f1', 0) * 100, 1)}%"
+                    ev["color"] = "#38bdf8"
+                elif etype == "rebalance":
+                    ev["label"] = "Rebalanceo capital"
+                    ev["detail"] = obj.get("reason", "")
+                    ev["color"] = "#22d3ee"
+                elif etype.startswith("exit_learning"):
+                    ev["label"] = f"Genie: {etype.replace('exit_learning_', '').upper()} ajustado"
+                    ev["detail"] = obj.get("reason", "")
+                    ev["color"] = "#c084fc"
+                elif etype == "coherence_guard":
+                    ev["label"] = "R:R corregido"
+                    ev["detail"] = obj.get("issue", "")
+                    ev["color"] = "#fb923c"
+                else:
+                    ev["label"] = etype
+                    ev["detail"] = str(obj)
+                    ev["color"] = "#94a3b8"
+                events.append(ev)
+    except Exception:
+        pass
+    return JSONResponse({"events": events})
+
+
 @app.get("/ai-log-learning")
 def get_ai_log_learning(symbol: str = "", lookback_hours: int = 24):
   if not os.path.exists(TRADES_LOG_FILE):
@@ -1111,6 +1181,18 @@ def force_scan_endpoint():
         return JSONResponse({"error": "Market scanner no disponible"}, status_code=503)
     result = market_scanner.force_scan()
     return JSONResponse(result)
+
+
+@app.get("/scanner/stream-scan")
+def stream_scan_endpoint():
+    if market_scanner is None:
+        return JSONResponse({"error": "Market scanner no disponible"}, status_code=503)
+
+    def event_generator():
+        for chunk in market_scanner.run_scan_streaming():
+            yield f"data: {chunk}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 # ─────────────────── Auto Optimizer Endpoints ───────────────────
@@ -1289,7 +1371,7 @@ def get_intelligence_state():
         pass
     # Fallback a instancia local del dashboard
     if intelligence_engine is None:
-        return JSONResponse({"error": "Intelligence engine no disponible", "signals_evaluated": 0})
+        return JSONResponse({"error": "Inteli Genie no disponible", "signals_evaluated": 0})
     return JSONResponse(intelligence_engine.get_intelligence_state())
 
 
@@ -1884,8 +1966,16 @@ def get_periodic_analysis_history():
 
 
 @app.post("/paper-reset")
-def post_paper_reset():
+async def post_paper_reset(request: Request):
     """Borra TODOS los datos de trading para empezar de cero (solo paper)."""
+    preserve_training_data = False
+    try:
+        payload = await request.json()
+        if isinstance(payload, dict):
+            preserve_training_data = bool(payload.get("preserve_training_data", False))
+    except Exception:
+        preserve_training_data = False
+
     # Verificar modo paper
     state = load_state()
     mode = state.get("mode", "paper")
@@ -1899,7 +1989,6 @@ def post_paper_reset():
     files_to_delete = [
         TRADES_LOG_FILE,          # trades.log
         BOT_EVENTS_FILE,          # bot_events.log
-        ML_DATASET_FILE,          # ml_dataset.csv
         PERIODIC_ANALYSIS_FILE,   # periodic_analysis.json
         AI_MODEL_FILE,            # ai_model.json
         STATE_FILE,               # bot_state.json
@@ -1913,6 +2002,10 @@ def post_paper_reset():
         "__test.txt",
         "bot_state.json.tmp",
     ]
+    if not preserve_training_data:
+        files_to_delete.append(ML_DATASET_FILE)  # ml_dataset.csv
+    else:
+        deleted.append(ML_DATASET_FILE + " (preservado)")
     # Incluir archivos .tmp del state y otros residuales
     for f in os.listdir("."):
         if f.startswith("bot_state.json.") and f.endswith(".tmp"):

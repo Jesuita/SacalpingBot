@@ -30,10 +30,10 @@ OPTIMIZER_STATE_FILE = "optimizer_state.json"  # Persistir estado entre reinicio
 
 # Umbrales de decision
 MIN_TRADES_FOR_DECISION = 5      # Min trades para tomar decisiones sobre un par
-MIN_TRADES_GLOBAL = 10           # Min trades globales para ajustar parametros
+MIN_TRADES_GLOBAL = 7            # Min trades globales para ajustar parametros
 
 # Limites de parametros (ajustados para scalping)
-TP_MIN = 0.004      # 0.4% — minimo viable cubriendo fees
+TP_MIN = 0.003      # 0.3% — minimo viable cubriendo fees
 TP_MAX = 0.012      # 1.2% — maximo realista en scalping 1m
 SL_MIN = 0.002      # 0.2%
 SL_MAX = 0.006      # 0.6% — max sensato para scalping
@@ -49,6 +49,7 @@ PARAM_COOLDOWN_HOURS = 2
 # Limites de rebalanceo
 MIN_ALLOC_PCT = 0.05   # 5% minimo del balance por par
 MAX_ALLOC_PCT = 0.40   # 40% maximo del balance por par
+MAX_REBALANCE_SHIFT_PCT = 20  # Max % de cambio por par por ciclo (evita rebalanceos extremos)
 MIN_PAIRS = 2           # Nunca bajar de 2 pares
 
 # ─────────────────────────────────────────────
@@ -311,7 +312,7 @@ def _decide_pair_removal(by_symbol: Dict, active_pairs: List[str]) -> Optional[D
             severity += 2
             reasons.append(f"PnL acumulado: ${data['pnl']:.2f}")
 
-        if severity >= 4 and (worst is None or severity > worst_severity):
+        if severity >= 7 and (worst is None or severity > worst_severity):
             worst = {"symbol": sym, "severity": severity, "reasons": reasons, **data}
             worst_severity = severity
 
@@ -397,17 +398,19 @@ def _decide_tp_sl_adjustment(global_metrics: Dict, current_tp: float, current_sl
         tp_hits = by_reason.get("take_profit", {}).get("count", 0) if by_reason else 0
         tp_hit_rate = tp_hits / global_metrics["trades"] * 100 if global_metrics["trades"] > 0 else 0
 
-        if tp_hit_rate < 5 and global_metrics["trades"] >= 20 and current_tp > TP_MIN:
+        if tp_hit_rate < 5 and global_metrics["trades"] >= 10 and current_tp > TP_MIN:
             # TP casi nunca se alcanza -> bajarlo para capturar profit reales
+            # Paso agresivo (-0.002) si PF < 0.5, moderado (-0.001) si PF >= 0.5
+            step = 0.002 if pf < 0.5 else 0.001
             if _can_adjust_param("take_profit_pct", "tighten"):
-                new_tp = max(current_tp - 0.001, TP_MIN)
+                new_tp = max(current_tp - step, TP_MIN)
                 if new_tp != current_tp:
                     actions.append({
                         "param": "take_profit_pct",
                         "action": "tighten_tp",
                         "old": current_tp,
                         "new": new_tp,
-                        "reason": f"TP hit rate muy bajo ({tp_hit_rate:.1f}%, {tp_hits}/{global_metrics['trades']}). Bajar para capturar profit.",
+                        "reason": f"TP hit rate muy bajo ({tp_hit_rate:.1f}%, {tp_hits}/{global_metrics['trades']}). Bajar para capturar profit (step={step}).",
                     })
         elif pf < 0.8 and avg_win > 0 and avg_win < avg_loss * 0.6:
             if _can_adjust_param("take_profit_pct", "tighten"):
@@ -469,6 +472,31 @@ def _decide_rebalance(by_symbol: Dict, active_pairs: List[str], balance: float, 
         factor = balance / total_alloc
         for sym in new_alloc:
             new_alloc[sym] = round(new_alloc[sym] * factor, 2)
+
+    # Cap máximo de cambio por ciclo: no mover más de MAX_REBALANCE_SHIFT_PCT por par
+    capped = False
+    for sym in active_pairs:
+        old = current_alloc.get(sym, 0)
+        proposed = new_alloc.get(sym, 0)
+        if old > 0:
+            pct_change = (proposed - old) / old * 100
+            if abs(pct_change) > MAX_REBALANCE_SHIFT_PCT:
+                if pct_change > 0:
+                    new_alloc[sym] = round(old * (1 + MAX_REBALANCE_SHIFT_PCT / 100), 2)
+                else:
+                    new_alloc[sym] = round(old * (1 - MAX_REBALANCE_SHIFT_PCT / 100), 2)
+                capped = True
+
+    # Re-normalizar después del cap
+    if capped:
+        total_alloc = sum(new_alloc.values())
+        if total_alloc > 0:
+            factor = balance / total_alloc
+            for sym in new_alloc:
+                new_alloc[sym] = round(new_alloc[sym] * factor, 2)
+        # Forzar límites min/max
+        for sym in new_alloc:
+            new_alloc[sym] = max(balance * MIN_ALLOC_PCT, min(balance * MAX_ALLOC_PCT, new_alloc[sym]))
 
     # Solo aplicar si hay diferencia significativa (>5% de cambio en algun par)
     significant = False
@@ -642,6 +670,43 @@ def run_optimization_cycle() -> Dict[str, Any]:
                 })
                 actions.append(action)
 
+    # ── 3d. Auto-deteccion de trailing catastrofico ──
+    # Si hay trades por trailing stop con perdida promedio > 2x la perdida promedio por senal, el trailing es peligroso
+    trailing_exits = by_reason.get("trailing stop", {})
+    trailing_count = trailing_exits.get("count", 0)
+    trailing_pnl = trailing_exits.get("pnl", 0)
+    if trailing_count >= 1:
+        trailing_avg = trailing_pnl / trailing_count
+        signal_avg = signal_pnl / signal_count if signal_count > 0 else -0.05
+        # Trailing catastrofico: perdida promedio trailing > 2x the average loss OR > $2 de perdida promedio
+        is_catastrophic = (trailing_avg < signal_avg * 2 and trailing_avg < -1.0) or trailing_avg < -2.0
+        if is_catastrophic:
+            current_trailing = cfg.get("trailing_stop_pct", 0.005)
+            current_max_trail_loss = cfg.get("max_trailing_loss_pct", 0.003)
+            adj_trail = False
+            # 1) Reducir trailing_stop_pct para que el stop siga más cerca
+            if current_trailing > TRAILING_MIN and _can_adjust_param("trailing_stop_pct", "tighten"):
+                new_trailing = max(round(current_trailing - 0.001, 4), TRAILING_MIN)
+                cfg["trailing_stop_pct"] = new_trailing
+                _mark_param_adjusted("trailing_stop_pct", "tighten")
+                config_changed = True
+                adj_trail = True
+            # 2) Reducir max_trailing_loss_pct (hard cap) si la pérdida fue extrema
+            if trailing_avg < -3.0 and current_max_trail_loss > 0.002:
+                new_cap = max(round(current_max_trail_loss - 0.001, 4), 0.002)
+                cfg["max_trailing_loss_pct"] = new_cap
+                config_changed = True
+                adj_trail = True
+            if adj_trail:
+                action = _log_action("trailing_catastrophic_fix", {
+                    "trailing_avg_pnl": round(trailing_avg, 2),
+                    "trailing_count": trailing_count,
+                    "new_trailing_pct": cfg.get("trailing_stop_pct"),
+                    "new_max_trail_loss": cfg.get("max_trailing_loss_pct"),
+                    "reason": f"Trailing catastrofico detectado: avg ${trailing_avg:.2f}/trade. Ajustando trailing y cap de perdida.",
+                })
+                actions.append(action)
+
     # ── 4. Rebalancear capital ──
     rebalance = _decide_rebalance(by_sym, active_pairs, balance, allocations)
     if rebalance:
@@ -655,6 +720,94 @@ def run_optimization_cycle() -> Dict[str, Any]:
             "reason": rebalance["reason"],
         })
         actions.append(action)
+
+    # ── 4b. Auto-correccion de rebalanceo extremo ──
+    # Si algun par tiene menos del 20% de lo que le corresponderia equitativamente, restaurar gradualmente
+    if len(active_pairs) >= 2:
+        equal_share = balance / len(active_pairs)
+        current_allocs = cfg.get("pair_allocations", {})
+        starved_pairs = []
+        for sym in active_pairs:
+            alloc = current_allocs.get(sym, equal_share)
+            if alloc < equal_share * 0.20:
+                starved_pairs.append(sym)
+        if starved_pairs:
+            # Restaurar gradualmente hacia equitativo (mover 15% del delta por ciclo)
+            restore_speed = 0.15
+            new_allocs = dict(current_allocs)
+            for sym in starved_pairs:
+                delta = equal_share - new_allocs.get(sym, 0)
+                new_allocs[sym] = round(new_allocs.get(sym, 0) + delta * restore_speed, 2)
+            # Quitar proporcional de los que tienen de mas
+            surplus_pairs = [s for s in active_pairs if s not in starved_pairs]
+            surplus_total = sum(new_allocs.get(s, 0) for s in surplus_pairs)
+            needed = balance - sum(new_allocs.get(s, 0) for s in starved_pairs)
+            if surplus_total > 0 and surplus_pairs:
+                for s in surplus_pairs:
+                    new_allocs[s] = round(new_allocs.get(s, 0) * (needed / surplus_total), 2)
+            cfg["pair_allocations"] = new_allocs
+            for sym, alloc in new_allocs.items():
+                cfg.setdefault("pair_targets", {})[sym] = round(alloc * 1.25, 2)
+            config_changed = True
+            action = _log_action("rebalance_recovery", {
+                "starved_pairs": starved_pairs,
+                "new_allocations": new_allocs,
+                "reason": f"Pares con capital critico (<20% equitativo) detectados: {starved_pairs}. Restaurando gradualmente.",
+            })
+            actions.append(action)
+
+    # ── 5. Integrar sugerencias de exit_learning (Inteli Genie) ──
+    try:
+        import intelligence_engine as _ie
+        intel_state = _ie.get_intelligence_state()
+        exit_analysis = intel_state.get("exit_analysis", {})
+        for sym, edata in exit_analysis.items():
+            for sug in edata.get("suggestions", []):
+                saction = sug.get("action", "")
+                confidence = sug.get("confidence", 0)
+                if confidence < 0.5:
+                    continue
+                if saction == "tighten_tp" and cfg["take_profit_pct"] > TP_MIN:
+                    if _can_adjust_param("take_profit_pct", "tighten"):
+                        old_tp = cfg["take_profit_pct"]
+                        new_tp = max(old_tp - 0.001, TP_MIN)
+                        if new_tp != old_tp:
+                            cfg["take_profit_pct"] = new_tp
+                            config_changed = True
+                            _mark_param_adjusted("take_profit_pct", "tighten")
+                            action = _log_action("exit_learning_tp", {
+                                "symbol": sym, "old": old_tp, "new": new_tp,
+                                "reason": f"Exit learning ({sym}): {sug['reason']}",
+                            })
+                            actions.append(action)
+                elif saction == "widen_tp" and cfg["take_profit_pct"] < TP_MAX:
+                    if _can_adjust_param("take_profit_pct", "widen"):
+                        old_tp = cfg["take_profit_pct"]
+                        new_tp = min(old_tp + 0.001, TP_MAX)
+                        if new_tp != old_tp:
+                            cfg["take_profit_pct"] = new_tp
+                            config_changed = True
+                            _mark_param_adjusted("take_profit_pct", "widen")
+                            action = _log_action("exit_learning_tp", {
+                                "symbol": sym, "old": old_tp, "new": new_tp,
+                                "reason": f"Exit learning ({sym}): {sug['reason']}",
+                            })
+                            actions.append(action)
+                elif saction == "widen_trailing" and cfg["trailing_stop_pct"] < TRAILING_MAX:
+                    if _can_adjust_param("trailing_stop_pct", "widen"):
+                        old_trail = cfg["trailing_stop_pct"]
+                        new_trail = min(old_trail + 0.001, TRAILING_MAX)
+                        if new_trail != old_trail:
+                            cfg["trailing_stop_pct"] = new_trail
+                            config_changed = True
+                            _mark_param_adjusted("trailing_stop_pct", "widen")
+                            action = _log_action("exit_learning_trailing", {
+                                "symbol": sym, "old": old_trail, "new": new_trail,
+                                "reason": f"Exit learning ({sym}): {sug['reason']}",
+                            })
+                            actions.append(action)
+    except Exception:
+        pass  # Intelligence engine no disponible, seguir sin
 
     # ── Guardar config si hubo cambios ──
     if config_changed:

@@ -714,12 +714,13 @@ def get_signal(closes: list) -> str:
     macd_hist_rising = macd_hist_now >= macd_hist_prev
     trend_up = ema_fast_now > ema_slow_now
     macd_negative_cross = macd_prev >= macd_signal_prev and macd_now < macd_signal_now
+    price_above_slow = closes[-1] > ema_slow_now
 
     # Entrada por continuidad: permite operar cuando la tendencia ya esta activa
     # aunque no haya cruce exacto en este tick.
-    continuation_buy = trend_up and macd_positive and macd_hist_rising and (RSI_OVERSOLD < rsi < 68)
+    continuation_buy = trend_up and macd_positive and macd_hist_rising and (RSI_OVERSOLD < rsi < 68) and price_above_slow
 
-    if (bullish_cross and rsi < RSI_OVERBOUGHT and macd_positive) or continuation_buy:
+    if (bullish_cross and rsi < RSI_OVERBOUGHT and macd_positive and price_above_slow) or continuation_buy:
         return "BUY"
     if bearish_cross or rsi > RSI_OVERBOUGHT or macd_negative_cross:
         return "SELL"
@@ -835,10 +836,17 @@ class BaseWallet:
     def update_trailing_stop(self, price: float):
         if not self.in_position:
             return
-        trailing_stop_pct = self.config_getter()["trailing_stop_pct"]
+        cfg = self.config_getter()
+        trailing_stop_pct = cfg["trailing_stop_pct"]
+        # Hard cap: trailing stop nunca puede estar más abajo que entry * (1 - max_trailing_loss_pct)
+        max_trailing_loss_pct = cfg.get("max_trailing_loss_pct", 0.003)
         if self.peak_price is None or price > self.peak_price:
             self.peak_price = price
             new_stop = self.peak_price * (1 - trailing_stop_pct)
+            # Floor: no dejar que el stop caiga más allá del cap de pérdida máxima
+            if self.entry_price:
+                floor_stop = self.entry_price * (1 - max_trailing_loss_pct)
+                new_stop = max(new_stop, floor_stop)
             if self.trailing_stop_price is None or new_stop > self.trailing_stop_price:
                 self.trailing_stop_price = new_stop
 
@@ -1246,6 +1254,7 @@ def run_symbol(symbol: str, initial_balance: float, target_balance: float, total
     ms_last_refresh_ts = 0.0
     day_key = datetime.date.today().isoformat()
     day_pnl = 0.0
+    day_trades = 0
     sells_last_hour = deque()
     kill_switch_announced = False
     drawdown_kill_announced = False
@@ -1285,6 +1294,7 @@ def run_symbol(symbol: str, initial_balance: float, target_balance: float, total
             if current_day != day_key:
                 day_key = current_day
                 day_pnl = 0.0
+                day_trades = 0
                 kill_switch_announced = False
                 log(f"[{symbol}] Nuevo dia detectado. Reiniciando contador de perdida diaria.")
 
@@ -1297,6 +1307,8 @@ def run_symbol(symbol: str, initial_balance: float, target_balance: float, total
             drawdown_from_initial = (initial_balance - current_value) / max(initial_balance, 1e-9)
             drawdown_kill_active = drawdown_from_initial >= cfg["max_drawdown_pct"]
             trades_per_hour_reached = len(sells_last_hour) >= cfg["max_trades_per_hour"]
+            max_daily = cfg.get("max_trades_per_day", 0)
+            trades_per_day_reached = max_daily > 0 and day_trades >= max_daily
 
             target_balance = cfg.get("pair_targets", {}).get(symbol, cfg["target_usdt"] / max(total_pairs, 1))
             latency_ms = 0.0
@@ -1428,10 +1440,10 @@ def run_symbol(symbol: str, initial_balance: float, target_balance: float, total
                         signal = "HOLD"
                         intel_blocked = True
                         if iteration % 5 == 0:
-                            log(f"[{symbol}] INTEL bloqueó BUY: score={intel_eval['score']}, razones={intel_eval['blocks']}")
+                            log(f"[{symbol}] GENIE bloqueó BUY: score={intel_eval['score']}, razones={intel_eval['blocks']}")
                 except Exception as exc:
                     if iteration % 20 == 0:
-                        log(f"[{symbol}] INTEL error (fallback): {exc}")
+                        log(f"[{symbol}] GENIE error (fallback): {exc}")
 
             balance = wallet.total_value(price)
             iteration += 1
@@ -1543,8 +1555,13 @@ def run_symbol(symbol: str, initial_balance: float, target_balance: float, total
                     f"[{symbol}] Limite por hora activo: {len(sells_last_hour)} SELL en 60m (max {cfg['max_trades_per_hour']}). Se bloquean nuevas entradas."
                 )
                 trades_cap_announced = True
-            if not trades_per_hour_reached:
+            if not trades_per_hour_reached and not trades_per_day_reached:
                 trades_cap_announced = False
+            if trades_per_day_reached and not trades_cap_announced:
+                log(
+                    f"[{symbol}] Limite diario activo: {day_trades} trades hoy (max {max_daily}). Se bloquean nuevas entradas."
+                )
+                trades_cap_announced = True
 
             if wallet.in_position:
                 # ── Adaptive trailing: usar ATR del par si intel esta habilitado ──
@@ -1579,6 +1596,7 @@ def run_symbol(symbol: str, initial_balance: float, target_balance: float, total
                     if trade:
                         day_pnl += float(trade.get("pnl", 0.0))
                         sells_last_hour.append(time.time())
+                        day_trades += 1
                         entry_ts = None
                         next_trade_after = time.time() + cfg["cooldown_seconds"]
                         if intelligence_engine:
@@ -1589,6 +1607,7 @@ def run_symbol(symbol: str, initial_balance: float, target_balance: float, total
                     if trade:
                         day_pnl += float(trade.get("pnl", 0.0))
                         sells_last_hour.append(time.time())
+                        day_trades += 1
                         entry_ts = None
                         next_trade_after = time.time() + cfg["cooldown_seconds"]
                         if intelligence_engine:
@@ -1599,6 +1618,7 @@ def run_symbol(symbol: str, initial_balance: float, target_balance: float, total
                     if trade:
                         day_pnl += float(trade.get("pnl", 0.0))
                         sells_last_hour.append(time.time())
+                        day_trades += 1
                         entry_ts = None
                         next_trade_after = time.time() + cfg["cooldown_seconds"]
                         if intelligence_engine:
@@ -1620,7 +1640,7 @@ def run_symbol(symbol: str, initial_balance: float, target_balance: float, total
                             if current_regime == "trending_up" and change < cfg["take_profit_pct"] * 0.8:
                                 intel_hold_override = True
                                 if iteration % 10 == 0:
-                                    log(f"[{symbol}] INTEL mantiene posicion: regime={current_regime}, profit={change*100:.2f}%, esperando TP")
+                                    log(f"[{symbol}] GENIE mantiene posicion: regime={current_regime}, profit={change*100:.2f}%, esperando TP")
                         except Exception:
                             pass
 
@@ -1629,6 +1649,7 @@ def run_symbol(symbol: str, initial_balance: float, target_balance: float, total
                     if trade:
                         day_pnl += float(trade.get("pnl", 0.0))
                         sells_last_hour.append(time.time())
+                        day_trades += 1
                         entry_ts = None
                         next_trade_after = time.time() + cfg["cooldown_seconds"]
                         if intelligence_engine:
@@ -1642,6 +1663,7 @@ def run_symbol(symbol: str, initial_balance: float, target_balance: float, total
                 and not daily_kill_active
                 and not drawdown_kill_active
                 and not trades_per_hour_reached
+                and not trades_per_day_reached
             ):
                 if ms_recommendation == "pause":
                     log(
@@ -1835,9 +1857,9 @@ def run():
     if intelligence_engine and cfg.get("intel_enabled", True):
         try:
             intelligence_engine.start_intelligence()
-            log("[INTEL] Motor de inteligencia iniciado.")
+            log("[GENIE] Inteli Genie iniciado.")
         except Exception as exc:
-            log(f"[INTEL] Error al iniciar motor de inteligencia: {exc}")
+            log(f"[GENIE] Error al iniciar Inteli Genie: {exc}")
 
     wallet_balance = cfg.get("wallet_balance", PAPER_BALANCE)
     pair_allocations = cfg.get("pair_allocations", {})

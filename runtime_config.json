@@ -1,31 +1,38 @@
 {
   "symbols": [
+    "SOLUSDT",
+    "XRPUSDT",
     "BTCUSDT",
     "ETHUSDT"
   ],
-  "wallet_balance": 1500.0,
+  "wallet_balance": 3000.0,
   "pair_allocations": {
+    "SOLUSDT": 750.0,
+    "XRPUSDT": 750.0,
     "BTCUSDT": 750.0,
     "ETHUSDT": 750.0
   },
   "pair_targets": {
-    "BTCUSDT": 937.5,
-    "ETHUSDT": 937.5
+    "SOLUSDT": 875.0,
+    "XRPUSDT": 875.0,
+    "BTCUSDT": 875.0,
+    "ETHUSDT": 875.0
   },
-  "trade_pct": 0.95,
-  "take_profit_pct": 0.005,
+  "trade_pct": 0.8,
+  "take_profit_pct": 0.003,
   "trailing_stop_pct": 0.004,
   "break_even_pct": 0.005,
   "max_initial_loss_pct": 0.003,
-  "target_usdt": 2000.0,
+  "max_trailing_loss_pct": 0.003,
+  "target_usdt": 3500.0,
   "update_mode": "candle",
   "poll_seconds": 4,
   "signal_confirmations": 1,
-  "sell_signal_confirmations": 2,
-  "min_hold_seconds": 120,
-  "max_api_latency_ms": 3000,
+  "sell_signal_confirmations": 4,
+  "min_hold_seconds": 240,
+  "max_api_latency_ms": 1200,
   "cooldown_seconds": 4,
-  "daily_loss_limit_usdt": 3.0,
+  "daily_loss_limit_usdt": 15.0,
   "max_drawdown_pct": 0.05,
   "max_trades_per_hour": 40,
   "optimizer_mode": "auto",
@@ -55,7 +62,7 @@
   "intel_regime_reduce_volatile": true,
   "intel_regime_volatile_reduce_pct": 0.5,
   "intel_volume_enabled": true,
-  "intel_volume_spike_mult": 3,
+  "intel_volume_spike_mult": 3.0,
   "intel_volume_drought_mult": 0.3,
   "intel_score_enabled": true,
   "intel_score_min_buy": 40,
@@ -68,5 +75,9 @@
   "mtf_timeframe": "5m",
   "mtf_candles": 30,
   "fee_pct": 0.001,
-  "stop_loss_pct": 0.003
+  "market_mode": "spot",
+  "futures_leverage": 3,
+  "futures_fee_pct": 0.0004,
+  "spot_fee_pct": 0.001,
+  "max_trades_per_day": 0
 }

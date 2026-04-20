@@ -18,6 +18,7 @@ DEFAULT_RUNTIME_CONFIG = {
     "trailing_stop_pct": 0.004,
     "break_even_pct": 0.005,
     "max_initial_loss_pct": 0.003,
+    "max_trailing_loss_pct": 0.003,  # Hard cap: max perdida por trailing (0.3%)
     "target_usdt": 120.0,
     "update_mode": "candle",
     "poll_seconds": 60,
@@ -72,6 +73,13 @@ DEFAULT_RUNTIME_CONFIG = {
     "mtf_candles": 30,
     # Comisiones
     "fee_pct": 0.001,  # 0.1% taker fee (Binance default)
+    # Modo de mercado
+    "market_mode": "spot",          # "spot" o "futures"
+    "futures_leverage": 3,          # Apalancamiento en futuros (1-20)
+    "futures_fee_pct": 0.0004,      # 0.04% taker fee (Binance Futures default)
+    "spot_fee_pct": 0.001,          # 0.1% taker fee (Binance Spot default)
+    # Trades diarios
+    "max_trades_per_day": 0,        # 0 = sin limite
 }
 
 DEFAULT_MULTI_SOURCE_CONFIG = {
@@ -160,6 +168,19 @@ def normalize_runtime_config(payload: dict) -> dict:
     cfg["ai_high_tp_mult"] = min(max(float(cfg.get("ai_high_tp_mult", 1.30)), 1.00), 2.00)
     cfg["ai_low_tp_mult"] = min(max(float(cfg.get("ai_low_tp_mult", 0.80)), 0.50), 1.00)
     cfg["fee_pct"] = min(max(float(cfg.get("fee_pct", 0.001)), 0.0), 0.01)
+    # Modo de mercado
+    mm = str(cfg.get("market_mode", "spot")).strip().lower()
+    cfg["market_mode"] = mm if mm in {"spot", "futures"} else "spot"
+    cfg["futures_leverage"] = min(max(int(float(cfg.get("futures_leverage", 3))), 1), 20)
+    cfg["futures_fee_pct"] = min(max(float(cfg.get("futures_fee_pct", 0.0004)), 0.0), 0.01)
+    cfg["spot_fee_pct"] = min(max(float(cfg.get("spot_fee_pct", 0.001)), 0.0), 0.01)
+    # Auto-sync fee_pct segun modo
+    if cfg["market_mode"] == "futures":
+        cfg["fee_pct"] = cfg["futures_fee_pct"]
+    else:
+        cfg["fee_pct"] = cfg["spot_fee_pct"]
+    # Trades diarios
+    cfg["max_trades_per_day"] = min(max(int(float(cfg.get("max_trades_per_day", 0))), 0), 1000)
     cfg["mtf_enabled"] = bool(cfg.get("mtf_enabled", False))
     mtf_tf = str(cfg.get("mtf_timeframe", "5m")).strip().lower()
     cfg["mtf_timeframe"] = mtf_tf if mtf_tf in {"3m", "5m", "15m"} else "5m"
