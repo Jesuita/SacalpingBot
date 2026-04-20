@@ -1143,7 +1143,7 @@
             <li>Eventos del bot (<code>bot_events.log</code>)</li>
             <li>Dataset de ML (<code>ml_dataset.csv</code>) (opcional)</li>
             <li>Analisis periodicos (<code>periodic_analysis.json</code>)</li>
-            <li>Modelo IA (<code>ai_model.json</code>)</li>
+            <li>Modelo IA (<code>ai_model.json</code>) (opcional)</li>
             <li>Logs del optimizer e inteligencia</li>
             <li>Estado del bot (<code>bot_state.json</code>) — se recrea limpio</li>
             <li>Configuracion (<code>runtime_config.json</code>) — vuelve a default</li>
@@ -1154,6 +1154,13 @@
             <span>
               Conservar datos de entrenamiento (<code>ml_dataset.csv</code>)
               <span class="block text-slate-400">Si activas esta opcion, el reset borra logs/estado pero mantiene el dataset para seguir entrenando IA.</span>
+            </span>
+          </label>
+          <label class="mb-4 flex items-start gap-2 text-xs text-slate-200 bg-slate-800/70 border border-slate-700 rounded-lg px-3 py-2">
+            <input id="resetKeepAiModel" type="checkbox" class="mt-0.5 accent-emerald-500" />
+            <span>
+              Conservar modelo IA (<code>ai_model.json</code>)
+              <span class="block text-slate-400">Mantiene el modelo entrenado actual para no perder su estado durante el reset.</span>
             </span>
           </label>
           <p class="text-xs text-amber-400 font-bold mb-4">El bot se debe reiniciar despues del reset para que tome efecto.</p>
@@ -3288,19 +3295,26 @@
     window.confirmPaperReset = function() {
       const keepEl = document.getElementById('resetKeepTrainingData');
       if (keepEl) keepEl.checked = true;
+      const keepAiModelEl = document.getElementById('resetKeepAiModel');
+      if (keepAiModelEl) keepAiModelEl.checked = true;
       document.getElementById('resetModal').classList.remove('hidden');
     };
 
     window.executePaperReset = async function() {
       const btn = document.getElementById('resetConfirmBtn');
       const keepEl = document.getElementById('resetKeepTrainingData');
+      const keepAiModelEl = document.getElementById('resetKeepAiModel');
       const preserveTrainingData = !!(keepEl && keepEl.checked);
+      const preserveAiModel = !!(keepAiModelEl && keepAiModelEl.checked);
       if (btn) { btn.disabled = true; btn.textContent = 'Borrando...'; }
       try {
         const resp = await fetch('/paper-reset', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ preserve_training_data: preserveTrainingData }),
+          body: JSON.stringify({
+            preserve_training_data: preserveTrainingData,
+            preserve_ai_model: preserveAiModel,
+          }),
         });
         const data = await resp.json();
         document.getElementById('resetModal').classList.add('hidden');
