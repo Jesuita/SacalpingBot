@@ -1970,14 +1970,17 @@ async def post_paper_reset(request: Request):
     """Borra TODOS los datos de trading para empezar de cero (solo paper)."""
     preserve_training_data = False
     preserve_ai_model = False
+    preserve_periodic_analysis = False
     try:
         payload = await request.json()
         if isinstance(payload, dict):
             preserve_training_data = bool(payload.get("preserve_training_data", False))
             preserve_ai_model = bool(payload.get("preserve_ai_model", False))
+            preserve_periodic_analysis = bool(payload.get("preserve_periodic_analysis", False))
     except Exception:
         preserve_training_data = False
         preserve_ai_model = False
+        preserve_periodic_analysis = False
 
     # Verificar modo paper
     state = load_state()
@@ -1992,7 +1995,6 @@ async def post_paper_reset(request: Request):
     files_to_delete = [
         TRADES_LOG_FILE,          # trades.log
         BOT_EVENTS_FILE,          # bot_events.log
-        PERIODIC_ANALYSIS_FILE,   # periodic_analysis.json
         STATE_FILE,               # bot_state.json
         MULTI_SOURCE_CONFIG_FILE, # multi_source_config.json
         "optimizer_actions.log",
@@ -2012,6 +2014,10 @@ async def post_paper_reset(request: Request):
         files_to_delete.append(AI_MODEL_FILE)  # ai_model.json
     else:
         deleted.append(AI_MODEL_FILE + " (preservado)")
+    if not preserve_periodic_analysis:
+        files_to_delete.append(PERIODIC_ANALYSIS_FILE)  # periodic_analysis.json
+    else:
+        deleted.append(PERIODIC_ANALYSIS_FILE + " (preservado)")
     # Incluir archivos .tmp del state y otros residuales
     for f in os.listdir("."):
         if f.startswith("bot_state.json.") and f.endswith(".tmp"):
